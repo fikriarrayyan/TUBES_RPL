@@ -1,0 +1,138 @@
+-- =====================================================================
+-- KonsulIn - Skema Database (MySQL)
+-- Sumber: Class Diagram RPL 1.docx (Gambar 3.1)
+-- Delapan class: User, Mahasiswa, Dosen, Admin, Jadwal,
+--                PengajuanKonsultasi, Notifikasi, RiwayatKonsultasi
+-- Pewarisan User -> Admin/Mahasiswa/Dosen dibuat dengan tabel terpisah
+-- yang memakai primary key yang sama dengan tabel user (satu akun saja).
+-- =====================================================================
+
+CREATE DATABASE IF NOT EXISTS konsulin
+  CHARACTER SET utf8mb4
+  COLLATE utf8mb4_unicode_ci;
+USE konsulin;
+
+-- ---------------------------------------------------------------------
+-- User (kelas abstrak): satu tabel akun untuk semua peran
+-- password_hash menyimpan HASH, bukan teks biasa (atribut "password" di diagram)
+-- ---------------------------------------------------------------------
+CREATE TABLE user (
+  id_user        INT AUTO_INCREMENT PRIMARY KEY,
+  nama           VARCHAR(100) NOT NULL,
+  email          VARCHAR(100) NOT NULL UNIQUE,
+  password_hash  VARCHAR(255) NOT NULL,
+  role           ENUM('mahasiswa','dosen','admin') NOT NULL,
+  status_akun    ENUM('aktif','nonaktif') NOT NULL DEFAULT 'aktif'
+) ENGINE=InnoDB;
+
+-- ---------------------------------------------------------------------
+-- Admin
+-- ---------------------------------------------------------------------
+CREATE TABLE admin (
+  id_user  INT PRIMARY KEY,
+  jabatan  VARCHAR(100),
+  FOREIGN KEY (id_user) REFERENCES user(id_user) ON DELETE CASCADE
+) ENGINE=InnoDB;
+
+-- ---------------------------------------------------------------------
+-- Mahasiswa (NIM unik)
+-- ---------------------------------------------------------------------
+CREATE TABLE mahasiswa (
+  id_user   INT PRIMARY KEY,
+  nim       VARCHAR(20) NOT NULL UNIQUE,
+  angkatan  INT,
+  FOREIGN KEY (id_user) REFERENCES user(id_user) ON DELETE CASCADE
+) ENGINE=InnoDB;
+
+-- ---------------------------------------------------------------------
+-- Dosen (NIDN unik)
+-- ---------------------------------------------------------------------
+CREATE TABLE dosen (
+  id_user          INT PRIMARY KEY,
+  nidn             VARCHAR(20) NOT NULL UNIQUE,
+  bidang_keahlian  VARCHAR(150),
+  FOREIGN KEY (id_user) REFERENCES user(id_user) ON DELETE CASCADE
+) ENGINE=InnoDB;
+
+-- ---------------------------------------------------------------------
+-- Jadwal: Dosen 1 --- 0..* Jadwal ("memiliki")
+-- ---------------------------------------------------------------------
+CREATE TABLE jadwal (
+  id_jadwal      INT AUTO_INCREMENT PRIMARY KEY,
+  id_dosen       INT NOT NULL,
+  tanggal        DATE NOT NULL,
+  jam_mulai      TIME NOT NULL,
+  jam_selesai    TIME NOT NULL,
+  status_jadwal  ENUM('tersedia','terpesan') NOT NULL DEFAULT 'tersedia',
+  FOREIGN KEY (id_dosen) REFERENCES dosen(id_user),
+  -- mencegah slot persis sama untuk dosen yang sama
+  UNIQUE KEY uq_slot (id_dosen, tanggal, jam_mulai, jam_selesai)
+) ENGINE=InnoDB;
+
+-- ---------------------------------------------------------------------
+-- PengajuanKonsultasi
+--   Mahasiswa 1 --- 0..* PengajuanKonsultasi ("mengajukan")
+--   Dosen     1 --- 0..* PengajuanKonsultasi ("merespons")
+--   Jadwal    1 --- 0..* PengajuanKonsultasi ("dipilih pada")
+-- ---------------------------------------------------------------------
+CREATE TABLE pengajuan_konsultasi (
+  id_pengajuan       INT AUTO_INCREMENT PRIMARY KEY,
+  id_mahasiswa       INT NOT NULL,
+  id_dosen           INT NOT NULL,
+  id_jadwal          INT NOT NULL,
+  topik              VARCHAR(255) NOT NULL,
+  tanggal_pengajuan  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  status             ENUM('menunggu','disetujui','ditolak','alternatif','selesai')
+                     NOT NULL DEFAULT 'menunggu',
+  jadwal_alternatif  DATETIME NULL,
+  tanggapan          TEXT NULL,
+  FOREIGN KEY (id_mahasiswa) REFERENCES mahasiswa(id_user),
+  FOREIGN KEY (id_dosen)     REFERENCES dosen(id_user),
+  FOREIGN KEY (id_jadwal)    REFERENCES jadwal(id_jadwal)
+) ENGINE=InnoDB;
+
+-- ---------------------------------------------------------------------
+-- Notifikasi
+--   User 1 --- 0..* Notifikasi ("menerima")
+--   PengajuanKonsultasi 1 --- 0..* Notifikasi ("memicu")
+-- ---------------------------------------------------------------------
+CREATE TABLE notifikasi (
+  id_notifikasi  INT AUTO_INCREMENT PRIMARY KEY,
+  id_penerima    INT NOT NULL,
+  id_pengajuan   INT NOT NULL,
+  pesan          VARCHAR(255) NOT NULL,
+  waktu_kirim    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  sudah_dibaca   BOOLEAN NOT NULL DEFAULT FALSE,
+  FOREIGN KEY (id_penerima)  REFERENCES user(id_user) ON DELETE CASCADE,
+  FOREIGN KEY (id_pengajuan) REFERENCES pengajuan_konsultasi(id_pengajuan) ON DELETE CASCADE
+) ENGINE=InnoDB;
+
+-- ---------------------------------------------------------------------
+-- RiwayatKonsultasi: PengajuanKonsultasi 1 --- 0..1 RiwayatKonsultasi
+-- (UNIQUE pada id_pengajuan menjamin paling banyak satu riwayat)
+-- ---------------------------------------------------------------------
+CREATE TABLE riwayat_konsultasi (
+  id_riwayat          INT AUTO_INCREMENT PRIMARY KEY,
+  id_pengajuan        INT NOT NULL UNIQUE,
+  tanggal_konsultasi  DATE NOT NULL,
+  topik               VARCHAR(255) NOT NULL,
+  catatan             TEXT NULL,
+  FOREIGN KEY (id_pengajuan) REFERENCES pengajuan_konsultasi(id_pengajuan)
+) ENGINE=InnoDB;
+
+-- ---------------------------------------------------------------------
+-- CATATAN KEPUTUSAN TIM (belum ada di Class Diagram, jangan diaktifkan
+-- sebelum disetujui):
+-- KF-16 "Memantau aktivitas sistem" tidak punya class sendiri di RPL.
+-- Opsi: (a) cukup menampilkan data dari tabel di atas (login terakhir,
+-- jumlah pengajuan, dst.), atau (b) menambah tabel log_aktivitas.
+-- Contoh opsi (b), dalam bentuk komentar:
+--
+-- CREATE TABLE log_aktivitas (
+--   id_log     INT AUTO_INCREMENT PRIMARY KEY,
+--   id_user    INT NULL,
+--   aktivitas  VARCHAR(255) NOT NULL,
+--   waktu      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+--   FOREIGN KEY (id_user) REFERENCES user(id_user) ON DELETE SET NULL
+-- ) ENGINE=InnoDB;
+-- ---------------------------------------------------------------------
